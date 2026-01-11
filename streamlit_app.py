@@ -3,6 +3,7 @@ import requests
 import base64
 import re
 from urllib.parse import urlparse, parse_qs
+import hashlib
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
@@ -11,6 +12,74 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- SISTEMA DI AUTENTICAZIONE ---
+def check_credentials():
+    """Verifica username e password usando i secrets di Streamlit"""
+    
+    def credentials_entered():
+        """Callback quando vengono inserite le credenziali"""
+        # Verifica username
+        entered_username = st.session_state["username"]
+        entered_password = st.session_state["password"]
+        
+        # Hash della password inserita
+        hashed_password = hashlib.sha256(entered_password.encode()).hexdigest()
+        
+        # Confronta con le credenziali nei secrets
+        if (entered_username == st.secrets["app_username"] and 
+            hashed_password == st.secrets["app_password_hash"]):
+            st.session_state["authenticated"] = True
+            # Rimuove le credenziali dalla sessione per sicurezza
+            del st.session_state["username"]
+            del st.session_state["password"]
+        else:
+            st.session_state["authenticated"] = False
+
+    # Se non è ancora stato verificato lo stato di login
+    if "authenticated" not in st.session_state:
+        # Mostra form di login
+        st.markdown("### 🔐 Accesso Richiesto")
+        st.text_input(
+            "Nome Utente",
+            key="username",
+            placeholder="Inserisci il nome utente"
+        )
+        st.text_input(
+            "Password",
+            type="password",
+            key="password",
+            placeholder="Inserisci la password"
+        )
+        st.button("Login", on_click=credentials_entered, type="primary")
+        st.markdown("<small>Inserisci le credenziali per accedere all'applicazione</small>", unsafe_allow_html=True)
+        return False
+    
+    # Se le credenziali sono errate
+    elif not st.session_state["authenticated"]:
+        st.markdown("### 🔐 Accesso Richiesto")
+        st.text_input(
+            "Nome Utente",
+            key="username",
+            placeholder="Inserisci il nome utente"
+        )
+        st.text_input(
+            "Password",
+            type="password",
+            key="password",
+            placeholder="Inserisci la password"
+        )
+        st.button("Login", on_click=credentials_entered, type="primary")
+        st.error("😕 Credenziali errate, riprova")
+        return False
+    
+    # Credenziali corrette
+    else:
+        return True
+
+# Verifica autenticazione
+if not check_credentials():
+    st.stop()
 
 # --- STILE CSS PERSONALIZZATO ---
 st.markdown("""
@@ -77,8 +146,7 @@ def generate_data(mid):
     
     urls = {
         'search': f"https://www.google.com/search?kgmid={mid_clean}",
-        'profile': f"https://profile.google.com/cp/{cpid}",
-        'knowledge_graph': f"https://developers.google.com/knowledge-graph/reference/rest/v1/entities/search?ids={mid_clean}"
+        'profile': f"https://profile.google.com/cp/{cpid}"
     }
     
     return mid_clean, cpid, urls
@@ -98,16 +166,14 @@ def display_results(mid_clean, cpid, urls):
         st.code(cpid, language="text")
 
     st.markdown("### 🔗 Collegamenti Rapidi")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.link_button("🌐 Google Search", urls['search'], use_container_width=True)
     c2.link_button("👤 Google Profile", urls['profile'], use_container_width=True)
-    c3.link_button("🛠️ API Explorer", urls['knowledge_graph'], use_container_width=True)
 
     # Sezione per copiare i link
     with st.expander("📋 Copia Rapida Link"):
         st.text_input("URL Search", urls['search'], disabled=True)
         st.text_input("URL Profile", urls['profile'], disabled=True)
-        st.text_input("API Explorer", urls['knowledge_graph'], disabled=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -115,7 +181,7 @@ with st.sidebar:
     
     input_method = st.radio(
         "Scegli metodo di input:",
-        ["📝 MID Manuale", "🔗 URL Condivisione"],
+        ["🔗 URL Condivisione", "📝 MID Manuale"],
         label_visibility="visible"
     )
     
@@ -136,6 +202,13 @@ with st.sidebar:
     - `https://share.google/xxxxx`
     - `https://search.app/xxxxx`
     """)
+    
+    st.divider()
+    
+    # Pulsante logout
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 # --- MAIN CONTENT ---
 st.title("🔍 Knowledge Graph Explorer")
@@ -143,30 +216,8 @@ st.caption("Estrai ID e genera link ai profili Google in un clic.")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ========== METODO 1: MID MANUALE ==========
-if input_method == "📝 MID Manuale":
-    st.markdown("### Inserimento Manuale MID")
-    
-    mid_input = st.text_input(
-        "Knowledge Graph ID",
-        placeholder="/m/0jcx (es. Leonardo da Vinci)",
-        help="Inserisci un MID valido nel formato /m/xxxxx o /g/xxxxx",
-        label_visibility="visible"
-    )
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    if st.button("🚀 Genera Analisi", type="primary"):
-        if not mid_input:
-            st.warning("⚠️ Inserisci un MID prima di procedere")
-        elif not validate_mid(mid_input):
-            st.error("❌ Formato MID non valido. Deve essere /m/xxxxx o /g/xxxxx")
-        else:
-            mid_clean, cpid, urls = generate_data(mid_input)
-            display_results(mid_clean, cpid, urls)
-
-# ========== METODO 2: URL DI CONDIVISIONE ==========
-else:
+# ========== METODO 1: URL DI CONDIVISIONE ==========
+if input_method == "🔗 URL Condivisione":
     st.markdown("### Estrazione da URL di Condivisione")
     
     url_input = st.text_input(
@@ -195,6 +246,28 @@ else:
                     display_results(mid_clean, cpid, urls)
                 else:
                     st.error("❌ Impossibile estrarre il MID dall'URL fornito")
+
+# ========== METODO 2: MID MANUALE ==========
+else:
+    st.markdown("### Inserimento Manuale MID")
+    
+    mid_input = st.text_input(
+        "Knowledge Graph ID",
+        placeholder="/m/0jcx (es. Leonardo da Vinci)",
+        help="Inserisci un MID valido nel formato /m/xxxxx o /g/xxxxx",
+        label_visibility="visible"
+    )
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    if st.button("🚀 Genera Analisi", type="primary"):
+        if not mid_input:
+            st.warning("⚠️ Inserisci un MID prima di procedere")
+        elif not validate_mid(mid_input):
+            st.error("❌ Formato MID non valido. Deve essere /m/xxxxx o /g/xxxxx")
+        else:
+            mid_clean, cpid, urls = generate_data(mid_input)
+            display_results(mid_clean, cpid, urls)
 
 # --- FOOTER ---
 st.markdown("<br><br>", unsafe_allow_html=True)
